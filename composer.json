@@ -1,0 +1,24 @@
+{
+  "name": "mhmfajar/php-payment-orchestrator",
+  "description": "Framework-agnostic PHP payment gateway orchestration package.",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "Mhmfajar\\PaymentOrchestrator\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Mhmfajar\\PaymentOrchestrator\\Tests\\": "tests/"
+    }
+  },
+  "require": {
+    "php": "^7.3 || ^8.0",
+    "ext-json": "*",
+    "psr/log": "^1.1 || ^2.0 || ^3.0"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "^8.5 || ^9.6"
+  }
+}
