@@ -3,31 +3,139 @@
 namespace Mhmfajar\PaymentOrchestrator\Gateways;
 
 use Mhmfajar\PaymentOrchestrator\Constants\GatewayFailureReason;
+use Mhmfajar\PaymentOrchestrator\Constants\PaymentStatus;
+use Mhmfajar\PaymentOrchestrator\DTO\CallbackResponse;
 use Mhmfajar\PaymentOrchestrator\DTO\PaymentRequest;
 use Mhmfajar\PaymentOrchestrator\DTO\PaymentResponse;
 
 /**
- * Midtrans gateway placeholder with callback signature verification support.
+ * Midtrans Snap gateway driver.
  */
 class MidtransGateway extends AbstractGateway
 {
     /**
-     * Create a Midtrans payment response placeholder.
+     * Create a Midtrans Snap transaction.
      *
      * @param PaymentRequest $request Normalized payment request.
-     * @return PaymentResponse Placeholder payment response.
+     * @return PaymentResponse Normalized payment response.
      */
     public function createPayment(PaymentRequest $request)
     {
-        // Real Snap/Core API calls belong here once credentials and HTTP transport are configured.
+        if (! $this->hasConfigValue('server_key')) {
+            return $this->missingConfigResponse($request, array('server_key'));
+        }
+
+        $payload = array(
+            'transaction_details' => array(
+                'order_id' => $request->getOrderId(),
+                'gross_amount' => $request->getAmount(),
+            ),
+            'customer_details' => array(
+                'first_name' => $request->getCustomerName(),
+                'email' => $request->getCustomerEmail(),
+            ),
+            'item_details' => $this->lineItems($request),
+        );
+
+        if ($request->getCustomerPhone()) {
+            $payload['customer_details']['phone'] = $request->getCustomerPhone();
+        }
+
+        if ($request->getReturnUrl()) {
+            $payload['callbacks'] = array('finish' => $request->getReturnUrl());
+        }
+
+        if ($request->getCallbackUrl() || $this->hasConfigValue('callback_url')) {
+            $payload['notification_url'] = $request->getCallbackUrl() ?: $this->configValue('callback_url');
+        }
+
+        $response = $this->requestJson('POST', $this->baseUrl() . '/snap/v1/transactions', $payload, array(
+            'Authorization: Basic ' . base64_encode($this->configValue('server_key') . ':'),
+        ));
+
+        if (! $this->httpOk($response)) {
+            return $this->failedHttpResponse($request, $response);
+        }
+
+        $body = $response['json'];
+        $token = $this->payloadValue($body, array('token'));
+        $redirectUrl = $this->payloadValue($body, array('redirect_url'));
+
+        if (! $token || ! $redirectUrl) {
+            return new PaymentResponse(array(
+                'success' => false,
+                'gateway' => $this->getName(),
+                'order_id' => $request->getOrderId(),
+                'message' => 'Midtrans response did not include a Snap token and redirect URL.',
+                'failure_reason' => GatewayFailureReason::INVALID_GATEWAY_RESPONSE,
+                'fallback_allowed' => true,
+                'raw' => $response,
+            ));
+        }
+
         return new PaymentResponse(array(
-            'success' => false,
+            'success' => true,
             'gateway' => $this->getName(),
             'order_id' => $request->getOrderId(),
-            'message' => 'Midtrans driver is not fully implemented yet.',
-            'failure_reason' => GatewayFailureReason::INVALID_GATEWAY_RESPONSE,
-            'fallback_allowed' => true,
-            'raw' => array(),
+            'status' => PaymentStatus::PENDING,
+            'transaction_id' => $token,
+            'gateway_order_id' => $request->getOrderId(),
+            'payment_url' => $redirectUrl,
+            'message' => 'Midtrans Snap transaction created.',
+            'raw' => $body,
+        ));
+    }
+
+    /**
+     * Retrieve a Midtrans transaction status.
+     *
+     * @param string $orderId Application order identifier.
+     * @return PaymentResponse
+     */
+    public function getStatus($orderId)
+    {
+        $response = $this->requestJson('GET', $this->baseUrl() . '/v2/' . rawurlencode($orderId) . '/status', null, array(
+            'Authorization: Basic ' . base64_encode($this->configValue('server_key') . ':'),
+        ));
+
+        if (! $this->httpOk($response)) {
+            return $this->failedHttpResponse($orderId, $response);
+        }
+
+        $body = $response['json'];
+        $rawStatus = $this->payloadValue($body, array('transaction_status'));
+
+        return new PaymentResponse(array(
+            'success' => true,
+            'gateway' => $this->getName(),
+            'order_id' => $orderId,
+            'status' => $this->statusMapper->map($this->getName(), $rawStatus),
+            'transaction_id' => $this->payloadValue($body, array('transaction_id')),
+            'gateway_order_id' => $this->payloadValue($body, array('order_id')),
+            'raw' => $body,
+        ));
+    }
+
+    /**
+     * Normalize a Midtrans callback payload.
+     *
+     * @param array $payload Raw callback payload.
+     * @return CallbackResponse
+     */
+    public function handleCallback(array $payload)
+    {
+        if (! $this->verifyCallback($payload)) {
+            return new CallbackResponse(array('valid' => false, 'gateway' => $this->getName(), 'raw' => $payload));
+        }
+
+        return new CallbackResponse(array(
+            'valid' => true,
+            'gateway' => $this->getName(),
+            'order_id' => $this->payloadValue($payload, array('order_id')),
+            'status' => $this->statusMapper->map($this->getName(), $this->payloadValue($payload, array('transaction_status'))),
+            'transaction_id' => $this->payloadValue($payload, array('transaction_id')),
+            'gateway_order_id' => $this->payloadValue($payload, array('order_id')),
+            'raw' => $payload,
         ));
     }
 
@@ -60,5 +168,19 @@ class MidtransGateway extends AbstractGateway
     public function getName()
     {
         return 'midtrans';
+    }
+
+    /**
+     * Return the Midtrans API base URL.
+     *
+     * @return string
+     */
+    private function baseUrl()
+    {
+        if ($this->configValue('base_url')) {
+            return rtrim($this->configValue('base_url'), '/');
+        }
+
+        return $this->configValue('is_production') ? 'https://app.midtrans.com' : 'https://app.sandbox.midtrans.com';
     }
 }

@@ -28,4 +28,4 @@ $response = $payment->create(array(
 header('Location: ' . $response->getPaymentUrl());
 ```
 
-Gateway drivers are intentionally safe placeholders in this version. They provide extension points, callback parsing, status mapping, and signature verification helpers where possible, but live payment API calls should be implemented with gateway credentials and HTTP client details.
+Built-in gateway drivers are provided for Midtrans Snap, Duitku Inquiry, Xendit Invoices, and DOKU Checkout. Configure the matching gateway credentials before using them in live payment flows.
